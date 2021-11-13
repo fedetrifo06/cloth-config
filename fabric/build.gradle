@@ -26,6 +26,8 @@ repositories {
     }
 }
 
+version = project.mod_version
+
 dependencies {
     minecraft "com.mojang:minecraft:${rootProject.architectury.minecraft}"
     mappings loom.officialMojangMappings()
@@ -64,10 +66,11 @@ dependencies {
 }
 
 processResources {
-    filesMatching("fabric.mod.json") {
-        expand "version": project.version
-    }
-    inputs.property "version", project.version
+	inputs.property "version", project.version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": project.version
+	}
 }
 
 shadowJar {
