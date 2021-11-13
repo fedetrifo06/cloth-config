@@ -30,6 +30,14 @@ allprojects {
     version = project.mod_version
     archivesBaseName = rootProject.archives_base_name
 
+    processResources {
+        inputs.property "version", project.version
+
+        filesMatching("fabric.mod.json") {
+            expand "version": project.version
+        }
+    }
+    
     group = rootProject.maven_group
 
     tasks.withType(JavaCompile) {
