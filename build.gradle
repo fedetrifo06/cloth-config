@@ -1,25 +1,69 @@
 plugins {
-    id "architectury-plugin" version "3.3-SNAPSHOT"
-    id "dev.architectury.loom" version "0.7.4-SNAPSHOT" apply false
-    id "com.matthewprenger.cursegradle" version "1.4.0" apply false
+    id "com.github.johnrengelman.shadow" version "7.0.0"
+    id "com.matthewprenger.cursegradle"
     id "maven-publish"
-    id "org.cadixdev.licenser" version "0.5.0" apply false
+}
+
+loom {
+    accessWidener = file("src/main/resources/cloth-config.accessWidener")
+}
+
+configurations {
+    shadowCommon
 }
 
 architectury {
-    minecraft = rootProject.minecraft_version
+    platformSetupLoomIde()
+    fabric()
 }
 
-subprojects {
-    apply plugin: "dev.architectury.loom"
-
-    loom {
-        silentMojangMappingsLicense()
-        useFabricMixin = true
+repositories {
+    maven {
+        url "https://maven.terraformersmc.com/releases/"
+        content {
+            includeGroup "com.terraformersmc"
+        }
     }
 }
 
 version = project.mod_version
+
+dependencies {
+    minecraft "com.mojang:minecraft:${rootProject.architectury.minecraft}"
+    mappings loom.officialMojangMappings()
+
+    modApi "net.fabricmc:fabric-loader:${rootProject.fabric_loader_version}"
+    modApi "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
+
+    modApi("me.shedaniel.cloth:basic-math:0.5.1")
+    include("me.shedaniel.cloth:basic-math:0.5.1")
+
+    implementation("blue.endless:jankson:${rootProject.jankson_version}")
+    implementation("com.moandjiezana.toml:toml4j:${rootProject.toml4j_version}")
+    implementation("org.yaml:snakeyaml:${rootProject.snakeyaml_version}")
+    shadowCommon("blue.endless:jankson:${rootProject.jankson_version}")
+    shadowCommon("com.moandjiezana.toml:toml4j:${rootProject.toml4j_version}") {
+        exclude(module: "gson")
+    }
+    shadowCommon("org.yaml:snakeyaml:${rootProject.snakeyaml_version}")
+
+    modCompileOnly("com.terraformersmc:modmenu:${mod_menu_version}") {
+        transitive(false)
+    }
+    modRuntime("com.terraformersmc:modmenu:${mod_menu_version}") {
+        transitive(false)
+    }
+
+    implementation(project(path: ":common")) {
+        transitive = false
+    }
+    developmentFabric(project(path: ":common")) {
+        transitive = false
+    }
+    shadowCommon(project(path: ":common", configuration: "transformProductionFabric")) {
+        transitive = false
+    }
+}
 
 processResources {
 	inputs.property "version", project.version
@@ -29,52 +73,71 @@ processResources {
 	}
 }
 
-allprojects {
-    apply plugin: 'java'
-    apply plugin: 'architectury-plugin'
-    apply plugin: 'org.cadixdev.licenser'
-
-    def runNumber = (System.getenv("GITHUB_RUN_NUMBER") == null ? "9999" : System.getenv("GITHUB_RUN_NUMBER"))
-
-    //version = rootProject.base_version + "." + runNumber
-    version = project.mod_version
-    archivesBaseName = rootProject.archives_base_name
-
-    processResources {
-        inputs.property "version", project.version
-
-        filesMatching("fabric.mod.json") {
-            expand "version": project.version
-        }
-    }
+shadowJar {
+    relocate "blue.endless.jankson", "${rootProject.maven_group}.clothconfig.shadowed.blue.endless.jankson"
+    relocate "com.moandjiezana.toml", "${rootProject.maven_group}.clothconfig.shadowed.com.moandjiezana.toml"
+    relocate "org.yaml.snakeyaml", "${rootProject.maven_group}.clothconfig.shadowed.org.yaml.snakeyaml"
     
-    group = rootProject.maven_group
+    configurations = [project.configurations.shadowCommon]
+    classifier "shadow"
+}
 
-    tasks.withType(JavaCompile) {
-        options.encoding = "UTF-8"
+remapJar {
+    dependsOn(shadowJar)
+    input.set(shadowJar.archiveFile)
+    archiveClassifier = "fabric"
+    
+    from rootProject.file("LICENSE.md")
+}
 
-        // The Minecraft launcher currently installs Java 8 for users, so your mod probably wants to target Java 8 too
-        // JDK 9 introduced a new way of specifying this that will make sure no newer classes or methods are used.
-        // We'll use that if it's available, but otherwise we'll use the older option.
-        options.release = 16
+publishing {
+    publications {
+        mavenFabric(MavenPublication) {
+            artifactId = rootProject.archives_base_name + "-fabric"
+            artifact(remapJar.archivePath) {
+                builtBy build
+                classifier null
+            }
+        }
     }
 
-    license {
-        header = rootProject.file("HEADER")
-
-        ext {
-            name = "shedaniel"
-            year = "2020 - 2021"
+    repositories {
+        if (System.getenv("MAVEN_PASS") != null) {
+            maven {
+                url = "https://deploy.shedaniel.me/"
+                credentials {
+                    username = "shedaniel"
+                    password = System.getenv("MAVEN_PASS")
+                }
+            }
         }
-
-        include "**/*.java"
-        exclude "**/ScrollingContainer.java"
-
-        ignoreFailures = true
     }
 }
 
-task licenseFormatAll
-subprojects { licenseFormatAll.dependsOn("${path}:licenseFormat") }
+curseforge {
+    if (project.hasProperty("curse_api_key") || System.getenv("curse_api_key") != null) {
+        apiKey = project.hasProperty("curse_api_key") ? project.property("curse_api_key") : System.getenv("curse_api_key")
+        project {
+            id = project.curseforge_id_fabric
+            releaseType = "beta"
+            addGameVersion "1.18-Snapshot"
+            addGameVersion "Fabric"
+            // may be needed in the future, but not right now
+            /*relations {
+                requiredDependency "fabric-api"
+            }*/
+            mainArtifact(remapJar.archivePath) {
+                displayName = "[Fabric $rootProject.supported_version] v$project.version"
+            }
+            afterEvaluate {
+                uploadTask.dependsOn("build")
+            }
+        }
+    }
+    options {
+        forgeGradleIntegration = false
+        javaVersionAutoDetect = false
+    }
+}
 
-task curseforgePublish
+rootProject.tasks.getByName("curseforgePublish").dependsOn tasks.getByName("curseforge")
